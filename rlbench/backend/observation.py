@@ -37,17 +37,37 @@ class Observation(object):
         self.front_rgb = front_rgb
         self.front_depth = front_depth
         self.front_mask = front_mask
+
+        # List containing the velocities of the joints (linear or angular velocities depending on the joint-type)
         self.joint_velocities = joint_velocities
+
+        # Intrinsic positions of the joints (7D).
+        # For each joint:
+        # This is a one-dimensional value: if the joint is revolute, the rotation angle is returned,
+        # if the joint is prismatic, the translation amount is returned, etc.
         self.joint_positions = joint_positions
+
+        # The forces or the torques applied to the joints along/about their z-axes.
         self.joint_forces = joint_forces
+
+        # Floating point value telling if the gripper is open or not (1.0 means open)
         self.gripper_open = gripper_open
+
+        # An array containing the (X,Y,Z,Qx,Qy,Qz,Qw) pose of the object.
         self.gripper_pose = gripper_pose
+
+        # An array of two elements describing the distance from gripper's origin.
         self.gripper_joint_positions = gripper_joint_positions
+
+        # A tuple containing the applied forces along the sensor's x, y and z-axes, and the torques along the
+        # sensor's x, y and z-axes.
         self.gripper_touch_forces = gripper_touch_forces
+
+        # A combination of all joint and gripper measures (except gripper_open)
         self.task_low_dim_state = task_low_dim_state
 
     def get_low_dim_data(self) -> np.ndarray:
-        """Gets a 1D array of all the low-dimensional obseervations.
+        """Gets a 1D array of all the low-dimensional observations.
 
         :return: 1D array of observations.
         """
