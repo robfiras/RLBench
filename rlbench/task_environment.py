@@ -99,6 +99,9 @@ class TaskEnvironment(object):
     def get_observation(self) -> Observation:
         return self._scene.get_observation()
 
+    def get_joint_upper_velocity_limits(self):
+        return self._robot.arm.get_joint_upper_velocity_limits()
+
     def _assert_action_space(self, action, expected_shape):
         if np.shape(action) != expected_shape:
             raise RuntimeError(
