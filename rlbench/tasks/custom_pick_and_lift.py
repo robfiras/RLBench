@@ -18,8 +18,6 @@ class CustomPickAndLift(Task):
         self.boundary = SpawnBoundary([Shape('pick_and_lift_boundary')])
         self.success_detector = ProximitySensor('pick_and_lift_success')
 
-        self.target.get_position()
-
         cond_set = ConditionSet([
             GraspedCondition(self.robot.gripper, self.target_block),
             DetectedCondition(self.target_block, self.success_detector)
@@ -51,6 +49,29 @@ class CustomPickAndLift(Task):
         block_position = self.target_block.get_pose()
         # get x, y, z from target position
         target_position = self.target.get_position()
-
         return np.concatenate((block_position, target_position))
 
+    def reward(self):
+        """ the custom reward consists of two parts:
+            1. distance between the gripper and the target_block
+            2. distance between the target_block and the target (lift_target)
+
+            the total reward is the sum of both parts"""
+        max_precision = 0.01  # 1cm
+        max_reward = 1 / max_precision
+        scale = 0.1
+
+        # fist part
+        gripper_position = self.robot.gripper.get_position()
+        target_block_position = self.target_block.get_position()
+        dist = np.sqrt(np.sum(np.square(np.subtract(target_block_position, gripper_position)), axis=0))  # euclidean norm
+        reward1 = min((1 / (dist + 0.00001)), max_reward)
+        reward1 = scale * reward1
+
+        # second part
+        target_position = self.target.get_position()
+        dist = np.sqrt(np.sum(np.square(np.subtract(target_position, target_block_position)), axis=0))  # euclidean norm
+        reward2 = min((1 / (dist + 0.00001)), max_reward)
+        reward2 = scale * reward2
+
+        return reward1 + reward2

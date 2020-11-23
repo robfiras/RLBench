@@ -42,10 +42,22 @@ class ReachTarget(Task):
 
     def base_rotation_bounds(self) -> Tuple[List[float], List[float]]:
         return [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]
-
+    
     def get_low_dim_state(self) -> np.ndarray:
         # One of the few tasks that have a custom low_dim_state function.
         return np.array(self.target.get_position())
 
     def is_static_workspace(self) -> bool:
         return True
+
+    def reward(self):
+        """ Calculates the reward for the ReachTarget Task based on the euclidean distance. """
+        max_precision = 0.01  # 1cm
+        max_reward = 1 / max_precision
+        scale = 0.1
+        gripper_position = self.robot.gripper.get_position()
+        target_position = self.target.get_position()
+        dist = np.sqrt(np.sum(np.square(np.subtract(target_position, gripper_position)), axis=0))  # euclidean norm
+        reward = min((1 / (dist + 0.00001)), max_reward)
+        reward = scale * reward
+        return reward
