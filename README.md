@@ -29,6 +29,10 @@ few-shot learning. [Click here for website and paper.](https://sites.google.com/
 
 ## Announcements
 
+### 8 September, 2020
+
+- New tutorial series on task creation [here](https://www.youtube.com/watch?v=bKaK_9O3v7Y&list=PLsffAlO5lBTRiBwnkw2-x0U7t6TrNCkfc)!
+
 ### 1 April, 2020
 
 - We added a Discord channel to allow the RLBench community to help one another. Click the Discord badge above.
@@ -42,17 +46,6 @@ few-shot learning. [Click here for website and paper.](https://sites.google.com/
 
 - Gym is now supported!
 
-### 26 September, 2019
-- Given the scope of this project, we expect there to be a number of issues over
-the coming months. Please be patient during this time. 
-After the initial few weeks of release, we will tag a commit as _'V1'_, which 
-should then be used for benchmarking algorithms going forward. Once there are enough 
-significant changes in the future, we will tag a new _'V2'_ commit, 
-and so on. Versioning like this will ensure results remain consistent and 
-reproducible as the benchmark grows.
-- Currently, only **live demos** are available when requesting demos. Stored 
-demos will be made available soon!
-
 
 ## Install
 
@@ -65,8 +58,8 @@ Hopefully you have now installed PyRep and have run one of the PyRep examples.
 Now lets install RLBench:
 
 ```bash
-pip3 install -r requirements.txt
-python3 setup.py install --user
+pip install -r requirements.txt
+pip install .
 ```
 
 And that's it!
@@ -261,10 +254,10 @@ Currently supported arms:
 You can then swap out the arm using `robot_configuration`:
 
 ```python
-env = Environment(action_mode=action_mode, robot_configuration='jaco')
+env = Environment(action_mode=action_mode, robot_configuration='sawyer')
 ```
 
-A full example (using the Jaco) can be seen in [examples/swap_arm.py](examples/swap_arm.py).
+A full example (using the Sawyer) can be seen in [examples/swap_arm.py](examples/swap_arm.py).
 
 _Don't see the arm that you want to use?_ Your first step is to make sure it is
 in PyRep, and if not, then you can follow the instructions for importing new
@@ -286,7 +279,9 @@ waypoints, and a python (_.py_) file, which is responsible for wiring the
 scene objects to the RLBench backend, applying variations, defining success
 criteria, and adding other more complex task behaviours.
 
-Here are some in-depth tutorials:
+Video tutorial series [here](https://www.youtube.com/watch?v=bKaK_9O3v7Y&list=PLsffAlO5lBTRiBwnkw2-x0U7t6TrNCkfc)!
+
+In-depth text tutorials:
 - [Simple Task](tutorials/simple_task.md)
 - [Complex Task](tutorials/complex_task.md)
 

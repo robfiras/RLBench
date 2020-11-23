@@ -2,7 +2,7 @@ from typing import List
 from pyrep.objects.shape import Shape
 from pyrep.objects.proximity_sensor import ProximitySensor
 from rlbench.backend.task import Task
-from rlbench.backend.conditions import DetectedCondition, NothingGrasped
+from rlbench.backend.conditions import DetectedCondition
 
 
 class TakeUmbrellaOutOfUmbrellaStand(Task):
@@ -11,8 +11,7 @@ class TakeUmbrellaOutOfUmbrellaStand(Task):
         umbrella = Shape('umbrella')
         self.register_graspable_objects([umbrella])
         self.register_success_conditions(
-            [DetectedCondition(umbrella, success_sensor, negated=True),
-             NothingGrasped(self.robot.gripper)])
+            [DetectedCondition(umbrella, success_sensor, negated=True)])
 
     def init_episode(self, index: int) -> List[str]:
         return ['take umbrella out of umbrella stand',

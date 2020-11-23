@@ -5,6 +5,7 @@ import numpy as np
 from pyquaternion import Quaternion
 from pyrep import PyRep
 from pyrep.errors import IKError
+from pyrep.objects import Dummy
 
 from rlbench import utils
 from rlbench.action_modes import ArmActionMode, ActionMode
@@ -35,7 +36,8 @@ class TaskEnvironment(object):
     def __init__(self, pyrep: PyRep, robot: Robot, scene: Scene, task: Task,
                  action_mode: ActionMode, dataset_root: str,
                  obs_config: ObservationConfig,
-                 static_positions: bool = False):
+                 static_positions: bool = False,
+                 attach_grasped_objects: bool = True):
         self._pyrep = pyrep
         self._robot = robot
         self._scene = scene
@@ -45,11 +47,14 @@ class TaskEnvironment(object):
         self._dataset_root = dataset_root
         self._obs_config = obs_config
         self._static_positions = static_positions
+        self._attach_grasped_objects = attach_grasped_objects
         self._reset_called = False
         self._prev_ee_velocity = None
+        self._enable_path_observations = False
 
         self._scene.load(self._task)
         self._pyrep.start()
+        self._target_workspace_check = Dummy.create()
 
     def get_name(self) -> str:
         return self._task.get_name()
@@ -70,8 +75,6 @@ class TaskEnvironment(object):
         return self._task.variation_count()
 
     def reset(self) -> (List[str], Observation):
-        logging.info('Resetting task: %s' % self._task.get_name())
-
         self._scene.reset()
         try:
             desc = self._scene.init_episode(
@@ -83,16 +86,7 @@ class TaskEnvironment(object):
                 'happen, please raise an issues on this task.'
                 % self._task.get_name()) from e
 
-        ctr_loop = self._robot.arm.joints[0].is_control_loop_enabled()
-        locked = self._robot.arm.joints[0].is_motor_locked_at_zero_velocity()
-        self._robot.arm.set_control_loop_enabled(False)
-        self._robot.arm.set_motor_locked_at_zero_velocity(True)
-
         self._reset_called = True
-
-        self._robot.arm.set_control_loop_enabled(ctr_loop)
-        self._robot.arm.set_motor_locked_at_zero_velocity(locked)
-
         # Returns a list of descriptions and the first observation
         return desc, self._scene.get_observation()
 
@@ -134,37 +128,58 @@ class TaskEnvironment(object):
              for t in action])
         self._robot.arm.set_joint_forces(np.abs(action))
 
-    def _ee_action(self, action):
+    def _ee_action(self, action, relative_to=None):
         self._assert_unit_quaternion(action[3:])
         try:
             joint_positions = self._robot.arm.solve_ik(
-                action[:3], quaternion=action[3:])
+                action[:3], quaternion=action[3:], relative_to=relative_to)
             self._robot.arm.set_joint_target_positions(joint_positions)
         except IKError as e:
             raise InvalidActionError('Could not find a path.') from e
         done = False
+        prev_values = None
+        # Move until reached target joint positions or until we stop moving
+        # (e.g. when we collide wth something)
         while not done:
             self._scene.step()
-            done = np.allclose(self._robot.arm.get_joint_positions(),
-                               joint_positions, atol=0.01)
+            cur_positions = self._robot.arm.get_joint_positions()
+            reached = np.allclose(cur_positions, joint_positions, atol=0.01)
+            not_moving = False
+            if prev_values is not None:
+                not_moving = np.allclose(
+                    cur_positions, prev_values, atol=0.001)
+            prev_values = cur_positions
+            done = reached or not_moving
 
-    def _path_action(self, action):
+    def _path_action(self, action, relative_to=None):
         self._assert_unit_quaternion(action[3:])
         try:
 
             # Check if the target is in the workspace; if not, then quick reject
             # Only checks position, not rotation
-            valid = self._scene.check_target_in_workspace(action[:3])
+            pos_to_check = action[:3]
+            if relative_to is not None:
+                self._target_workspace_check.set_position(
+                    pos_to_check, relative_to)
+                pos_to_check = self._target_workspace_check.get_position()
+            valid = self._scene.check_target_in_workspace(pos_to_check)
             if not valid:
                 raise InvalidActionError('Target is outside of workspace.')
 
             path = self._robot.arm.get_path(
-                action[:3], quaternion=action[3:], ignore_collisions=True)
+                action[:3], quaternion=action[3:], ignore_collisions=True,
+                relative_to=relative_to)
             done = False
             observations = []
             while not done:
                 done = path.step()
                 self._scene.step()
+                if self._enable_path_observations:
+                    observations.append(self._scene.get_observation())
+                success, terminate = self._task.success()
+                # If the task succeeds while traversing path, then break early
+                if success:
+                    break
                 observations.append(self._scene.get_observation())
             return observations
         except IKError as e:
@@ -222,58 +237,6 @@ class TaskEnvironment(object):
             self._robot.arm.set_joint_target_positions(cur + arm_action)
             self._scene.step()
 
-        elif self._action_mode.arm == ArmActionMode.ABS_EE_POSE:
-
-            self._assert_action_space(arm_action, (7,))
-            self._ee_action(list(arm_action))
-
-        elif self._action_mode.arm == ArmActionMode.ABS_EE_POSE_PLAN:
-
-            self._assert_action_space(arm_action, (7,))
-            self._path_observations = []
-            self._path_observations = self._path_action(list(arm_action))
-
-        elif self._action_mode.arm == ArmActionMode.DELTA_EE_POSE_PLAN:
-
-            self._assert_action_space(arm_action, (7,))
-            a_x, a_y, a_z, a_qx, a_qy, a_qz, a_qw = arm_action
-            x, y, z, qx, qy, qz, qw = self._robot.arm.get_tip().get_pose()
-            new_rot = Quaternion(a_qw, a_qx, a_qy, a_qz) * Quaternion(qw, qx,
-                                                                      qy, qz)
-            qw, qx, qy, qz = list(new_rot)
-            new_pose = [a_x + x, a_y + y, a_z + z] + [qx, qy, qz, qw]
-            self._path_observations = []
-            self._path_observations = self._path_action(list(new_pose))
-
-        elif self._action_mode.arm == ArmActionMode.DELTA_EE_POSE:
-
-            self._assert_action_space(arm_action, (7,))
-            a_x, a_y, a_z, a_qx, a_qy, a_qz, a_qw = arm_action
-            x, y, z, qx, qy, qz, qw = self._robot.arm.get_tip().get_pose()
-            new_rot = Quaternion(a_qw, a_qx, a_qy, a_qz) * Quaternion(
-                qw, qx, qy, qz)
-            qw, qx, qy, qz = list(new_rot)
-            new_pose = [a_x + x, a_y + y, a_z + z] + [qx, qy, qz, qw]
-            self._ee_action(list(new_pose))
-
-        elif self._action_mode.arm == ArmActionMode.ABS_EE_VELOCITY:
-
-            self._assert_action_space(arm_action, (7,))
-            pose = self._robot.arm.get_tip().get_pose()
-            new_pos = np.array(pose) + (arm_action * _DT)
-            self._ee_action(list(new_pos))
-
-        elif self._action_mode.arm == ArmActionMode.DELTA_EE_VELOCITY:
-
-            self._assert_action_space(arm_action, (7,))
-            if self._prev_ee_velocity is None:
-                self._prev_ee_velocity = np.zeros((7,))
-            self._prev_ee_velocity += arm_action
-            pose = self._robot.arm.get_tip().get_pose()
-            pose = np.array(pose)
-            new_pose = pose + (self._prev_ee_velocity * _DT)
-            self._ee_action(list(new_pose))
-
         elif self._action_mode.arm == ArmActionMode.ABS_JOINT_TORQUE:
 
             self._assert_action_space(
@@ -288,6 +251,53 @@ class TaskEnvironment(object):
             self._torque_action(new_action)
             self._scene.step()
 
+        elif self._action_mode.arm == ArmActionMode.ABS_EE_POSE_WORLD_FRAME:
+
+            self._assert_action_space(arm_action, (7,))
+            self._ee_action(list(arm_action))
+
+        elif self._action_mode.arm == ArmActionMode.ABS_EE_POSE_PLAN_WORLD_FRAME:
+
+            self._assert_action_space(arm_action, (7,))
+            self._path_observations = []
+            self._path_observations = self._path_action(list(arm_action))
+
+        elif self._action_mode.arm == ArmActionMode.DELTA_EE_POSE_PLAN_WORLD_FRAME:
+
+            self._assert_action_space(arm_action, (7,))
+            a_x, a_y, a_z, a_qx, a_qy, a_qz, a_qw = arm_action
+            x, y, z, qx, qy, qz, qw = self._robot.arm.get_tip().get_pose()
+            new_rot = Quaternion(a_qw, a_qx, a_qy, a_qz) * Quaternion(qw, qx,
+                                                                      qy, qz)
+            qw, qx, qy, qz = list(new_rot)
+            new_pose = [a_x + x, a_y + y, a_z + z] + [qx, qy, qz, qw]
+            self._path_observations = []
+            self._path_observations = self._path_action(list(new_pose))
+
+        elif self._action_mode.arm == ArmActionMode.DELTA_EE_POSE_WORLD_FRAME:
+
+            self._assert_action_space(arm_action, (7,))
+            a_x, a_y, a_z, a_qx, a_qy, a_qz, a_qw = arm_action
+            x, y, z, qx, qy, qz, qw = self._robot.arm.get_tip().get_pose()
+            new_rot = Quaternion(a_qw, a_qx, a_qy, a_qz) * Quaternion(
+                qw, qx, qy, qz)
+            qw, qx, qy, qz = list(new_rot)
+            new_pose = [a_x + x, a_y + y, a_z + z] + [qx, qy, qz, qw]
+            self._ee_action(list(new_pose))
+
+        elif self._action_mode.arm == ArmActionMode.EE_POSE_EE_FRAME:
+
+            self._assert_action_space(arm_action, (7,))
+            self._ee_action(
+                list(arm_action), relative_to=self._robot.arm.get_tip())
+
+        elif self._action_mode.arm == ArmActionMode.EE_POSE_PLAN_EE_FRAME:
+
+            self._assert_action_space(arm_action, (7,))
+            self._path_observations = []
+            self._path_observations = self._path_action(
+                list(arm_action), relative_to=self._robot.arm.get_tip())
+
         else:
             raise RuntimeError('Unrecognised action mode.')
 
@@ -297,7 +307,7 @@ class TaskEnvironment(object):
                 done = self._robot.gripper.actuate(ee_action, velocity=0.2)
                 self._pyrep.step()
                 self._task.step()
-            if ee_action == 0.0:
+            if ee_action == 0.0 and self._attach_grasped_objects:
                 # If gripper close action, the check for grasp.
                 for g_obj in self._task.get_graspable_objects():
                     self._robot.gripper.grasp(g_obj)
@@ -306,11 +316,22 @@ class TaskEnvironment(object):
                 self._robot.gripper.release()
 
         success, terminate = self._task.success()
-        return self._scene.get_observation(), int(success), terminate
+        task_reward = self._task.reward()
+        reward = float(success) if task_reward is None else task_reward
+        return self._scene.get_observation(), reward, terminate
+
+    def enable_path_observations(self, value: bool) -> None:
+        if (self._action_mode.arm != ArmActionMode.DELTA_EE_POSE_PLAN_WORLD_FRAME and
+                self._action_mode.arm != ArmActionMode.ABS_EE_POSE_PLAN_WORLD_FRAME and
+                self._action_mode.arm != ArmActionMode.EE_POSE_PLAN_EE_FRAME):
+            raise RuntimeError('Only available in DELTA_EE_POSE_PLAN or '
+                               'ABS_EE_POSE_PLAN action mode.')
+        self._enable_path_observations = value
 
     def get_path_observations(self):
-        if (self._action_mode.arm != ArmActionMode.DELTA_EE_POSE_PLAN and
-                self._action_mode.arm != ArmActionMode.ABS_EE_POSE_PLAN):
+        if (self._action_mode.arm != ArmActionMode.DELTA_EE_POSE_PLAN_WORLD_FRAME and
+                self._action_mode.arm != ArmActionMode.ABS_EE_POSE_PLAN_WORLD_FRAME and
+                self._action_mode.arm != ArmActionMode.EE_POSE_PLAN_EE_FRAME):
             raise RuntimeError('Only available in DELTA_EE_POSE_PLAN or '
                                'ABS_EE_POSE_PLAN action mode.')
         return self._path_observations
@@ -336,10 +357,10 @@ class TaskEnvironment(object):
                 self._task.get_name(), self._obs_config)
         else:
             ctr_loop = self._robot.arm.joints[0].is_control_loop_enabled()
-            self._robot.arm.joints[0].set_control_loop_enabled(True)
+            self._robot.arm.set_control_loop_enabled(True)
             demos = self._get_live_demos(
                 amount, callable_each_step, max_attempts)
-            self._robot.arm.joints[0].set_control_loop_enabled(ctr_loop)
+            self._robot.arm.set_control_loop_enabled(ctr_loop)
         return demos
 
     def _get_live_demos(self, amount: int,
@@ -367,6 +388,6 @@ class TaskEnvironment(object):
                     'Could not collect demos. Maybe a problem with the task?')
         return demos
 
-    def reset_to_demo(self, demo: Demo) -> None:
+    def reset_to_demo(self, demo: Demo) -> (List[str], Observation):
         demo.restore_state()
-        self.reset()
+        return self.reset()

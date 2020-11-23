@@ -22,8 +22,10 @@ class Observation(object):
                  joint_forces: np.ndarray,
                  gripper_open: float,
                  gripper_pose: np.ndarray,
+                 gripper_matrix: np.ndarray,
                  gripper_joint_positions: np.ndarray,
                  gripper_touch_forces: np.ndarray,
+                 wrist_camera_matrix: np.ndarray,
                  task_low_dim_state: np.ndarray):
         self.left_shoulder_rgb = left_shoulder_rgb
         self.left_shoulder_depth = left_shoulder_depth
@@ -56,6 +58,8 @@ class Observation(object):
         # An array containing the (X,Y,Z,Qx,Qy,Qz,Qw) pose of the object.
         self.gripper_pose = gripper_pose
 
+        self.gripper_matrix = gripper_matrix
+
         # An array of two elements describing the distance from gripper's origin.
         self.gripper_joint_positions = gripper_joint_positions
 
@@ -63,7 +67,9 @@ class Observation(object):
         # sensor's x, y and z-axes.
         self.gripper_touch_forces = gripper_touch_forces
 
-        # A combination of all joint and gripper measures (except gripper_open)
+        self.wrist_camera_matrix = wrist_camera_matrix
+
+        # Task-specific low-dim state
         self.task_low_dim_state = task_low_dim_state
 
     def get_low_dim_data(self) -> np.ndarray:
@@ -78,4 +84,4 @@ class Observation(object):
                      self.gripper_touch_forces, self.task_low_dim_state]:
             if data is not None:
                 low_dim_data.append(data)
-        return np.concatenate(low_dim_data)
+        return np.concatenate(low_dim_data) if len(low_dim_data) > 0 else np.array([])
