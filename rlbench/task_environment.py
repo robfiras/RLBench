@@ -102,6 +102,22 @@ class TaskEnvironment(object):
     def get_joint_upper_velocity_limits(self):
         return self._robot.arm.get_joint_upper_velocity_limits()
 
+    def get_all_graspable_object_positions(self):
+        """ returns the positions of all graspable object relative to all enabled cameras """
+        objects = self._task.get_graspable_objects()
+        positions = []
+        for ob in objects:
+            positions.append(self._scene.get_object_position_relative_to_cameras(ob))
+        return positions
+
+    def get_all_graspable_object_poses(self):
+        """ returns the pose of all graspable object relative to all enabled cameras """
+        objects = self._task.get_graspable_objects()
+        poses = []
+        for ob in objects:
+            poses.append(self._scene.get_object_pose_relative_to_cameras(ob))
+        return poses
+
     def _assert_action_space(self, action, expected_shape):
         if np.shape(action) != expected_shape:
             raise RuntimeError(

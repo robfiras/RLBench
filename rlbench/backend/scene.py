@@ -399,6 +399,30 @@ class Scene(object):
                 self._workspace_maxy > y > self._workspace_miny and
                 self._workspace_maxz > z > self._workspace_minz)
 
+    def get_object_position_relative_to_cameras(self, obj):
+        """ returns the position of an object relative to all enabled cameras in observation configuration """
+        obj_pos_left_shoulder = obj.get_position(relative_to=self._cam_over_shoulder_left) if self._cam_over_shoulder_left.still_exists() else None
+        obj_pos_right_shoulder = obj.get_position(relative_to=self._cam_over_shoulder_right) if self._cam_over_shoulder_right.still_exists() else None
+        obj_pos_front = obj.get_position(relative_to=self._cam_front) if self._cam_front.still_exists() else None
+        obj_pos_wrist = obj.get_position(relative_to=self._cam_wrist) if self._cam_wrist.still_exists() else None
+
+        return {"left_shoulder_camera": obj_pos_left_shoulder,
+                "right_shoulder_camera": obj_pos_right_shoulder,
+                "front_camera": obj_pos_front,
+                "wrist_camera": obj_pos_wrist}
+
+    def get_object_pose_relative_to_cameras(self, obj):
+        """ returns the pose of an object relative to all enabled cameras in observation configuration """
+        obj_pos_left_shoulder = obj.get_pose(relative_to=self._cam_over_shoulder_left) if self._cam_over_shoulder_left.still_exists() else None
+        obj_pos_right_shoulder = obj.get_pose(relative_to=self._cam_over_shoulder_right) if self._cam_over_shoulder_right.still_exists() else None
+        obj_pos_front = obj.get_pose(relative_to=self._cam_front) if self._cam_front.still_exists() else None
+        obj_pos_wrist = obj.get_pose(relative_to=self._cam_wrist) if self._cam_wrist.still_exists() else None
+
+        return {"left_shoulder_camera": obj_pos_left_shoulder,
+                "right_shoulder_camera": obj_pos_right_shoulder,
+                "front_camera": obj_pos_front,
+                "wrist_camera": obj_pos_wrist}
+
     def _demo_record_step(self, demo_list, record, func):
         if record:
             demo_list.append(self.get_observation())
