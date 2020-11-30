@@ -55,7 +55,7 @@ class ReachTarget(Task):
         max_precision = 0.01  # 1cm
         max_reward = 1 / max_precision
         scale = 0.1
-        gripper_position = self.robot.gripper.get_position()
+        gripper_position = self.robot.arm.get_tip().get_position()
         target_position = self.target.get_position()
         dist = np.sqrt(np.sum(np.square(np.subtract(target_position, gripper_position)), axis=0))  # euclidean norm
         reward = min((1 / (dist + 0.00001)), max_reward)
