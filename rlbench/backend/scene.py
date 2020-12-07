@@ -424,6 +424,7 @@ class Scene(object):
                 "front_camera": obj_pos_front,
                 "wrist_camera": obj_pos_wrist}
 
+
     def _demo_record_step(self, demo_list, record, func):
         if record:
             demo_list.append(self.get_observation())

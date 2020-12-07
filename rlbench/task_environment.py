@@ -96,20 +96,32 @@ class TaskEnvironment(object):
     def get_joint_upper_velocity_limits(self):
         return self._robot.arm.get_joint_upper_velocity_limits()
 
-    def get_all_graspable_object_positions(self):
+    def get_all_graspable_object_positions(self, relative_to_cameras=False):
         """ returns the positions of all graspable object relative to all enabled cameras """
         objects = self._task.get_graspable_objects()
         positions = []
         for ob in objects:
-            positions.append(self._scene.get_object_position_relative_to_cameras(ob))
+            if relative_to_camera:
+                positions.append(self._scene.get_object_position_relative_to_cameras(ob))
+            else:
+                positions.append({"left_shoulder_camera": ob.get_position(),
+                                  "right_shoulder_camera": ob.get_position(),
+                                  "front_camera": ob.get_position(),
+                                  "wrist_camera": ob.get_position()})
         return positions
 
-    def get_all_graspable_object_poses(self):
+    def get_all_graspable_object_poses(self, relative_to_cameras=False):
         """ returns the pose of all graspable object relative to all enabled cameras """
         objects = self._task.get_graspable_objects()
         poses = []
         for ob in objects:
-            poses.append(self._scene.get_object_pose_relative_to_cameras(ob))
+            if relative_to_cameras:
+                poses.append(self._scene.get_object_pose_relative_to_cameras(ob))
+            else:
+                poses.append({"left_shoulder_camera": ob.get_pose(),
+                              "right_shoulder_camera": ob.get_pose(),
+                              "front_camera": ob.get_pose(),
+                              "wrist_camera": ob.get_pose()})
         return poses
 
     def _assert_action_space(self, action, expected_shape):
