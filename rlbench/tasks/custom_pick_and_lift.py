@@ -79,8 +79,8 @@ class CustomPickAndLift(Task):
         max_reward = 1 / max_precision
         scale = 0.1
 
-        # first part
-        gripper_position = self.robot.gripper.get_position()
+        # fist part
+        gripper_position = self.robot.arm.get_tip().get_position()
         target_block_position = self.target_block.get_position()
         dist = np.sqrt(np.sum(np.square(np.subtract(target_block_position, gripper_position)), axis=0))  # euclidean norm
         reward1 = min((1 / (dist + 0.00001)), max_reward)
