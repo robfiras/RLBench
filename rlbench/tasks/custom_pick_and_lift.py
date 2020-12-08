@@ -2,6 +2,7 @@ import math
 import random
 from typing import List
 import numpy as np
+from pyrep.objects.object import Object
 from pyrep.objects.shape import Shape
 from pyrep.objects.proximity_sensor import ProximitySensor
 from pyrep.objects.vision_sensor import VisionSensor
@@ -21,10 +22,12 @@ class CustomPickAndLift(Task):
         self.register_graspable_objects([self.target_block])
         self.boundary = SpawnBoundary([Shape('pick_and_lift_boundary')])
         self.success_detector = ProximitySensor('pick_and_lift_success')
-        self.front_camera = VisionSensor('cam_front')
-        self.init_front_camera_position = self.front_camera.get_position()
-        self.init_front_camera_orientation = self.front_camera.get_orientation()
-        self.panda_base =Shape("Panda_link0_visual")
+        self.front_camera_exists = Object.exists('cam_front')
+        if self.front_camera_exists:
+            self.front_camera = VisionSensor('cam_front')
+            self.init_front_camera_position = self.front_camera.get_position()
+            self.init_front_camera_orientation = self.front_camera.get_orientation()
+            self.panda_base =Shape("Panda_link0_visual")
 
         cond_set = ConditionSet([
             GraspedCondition(self.robot.gripper, self.target_block),
@@ -47,8 +50,9 @@ class CustomPickAndLift(Task):
                                  min_rotation=(0, 0, -math.pi/8),
                                  max_rotation=(0,0, math.pi/8))
 
-        # apply new position to front camera for better generalization
-        self.front_camera_new_position()
+        if self.front_camera_exists:
+            # apply new position to front camera for better generalization
+            self.front_camera_new_position()
 
         return ['pick up the %s block and lift it up to the target' %
                 block_color_name,
@@ -59,8 +63,9 @@ class CustomPickAndLift(Task):
         return len(colors)
 
     def step(self) -> None:
-        # apply new position to front camera for better generalization
-        self.front_camera_new_position()
+        if self.front_camera_exists:
+            # apply new position to front camera for better generalization
+            self.front_camera_new_position()
 
     def get_low_dim_state(self) -> np.ndarray:
         # get pose from target block
