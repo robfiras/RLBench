@@ -13,7 +13,7 @@ from rlbench.backend.spawn_boundary import SpawnBoundary
 from rlbench.const import colors
 
 
-class CustomPickAndLift(Task):
+class CustomPickAndLiftNoRotation(Task):
 
     def init_task(self) -> None:
         self.target_block = Shape('pick_and_lift_target')
@@ -45,10 +45,9 @@ class CustomPickAndLift(Task):
             self.success_detector, min_rotation=(0.0, 0.0, 0.0),
             max_rotation=(0.0, 0.0, 0.0))
         for block in [self.target_block]:
-            # block is symteric -> limit rotation range to pi/4 = 45° to avoid ambiguous poses
             self.boundary.sample(block, min_distance=0.1,
-                                 min_rotation=(0, 0, -math.pi/8),
-                                 max_rotation=(0,0, math.pi/8))
+                                 min_rotation=(0, 0, 0),
+                                 max_rotation=(0, 0, 0))
 
         if self.front_camera_exists:
             # apply new position to front camera for better generalization
@@ -59,6 +58,10 @@ class CustomPickAndLift(Task):
                 'grasp the %s block to the target' % block_color_name,
                 'lift the %s block up to the target' % block_color_name]
 
+    def base_rotation_bounds(self):
+        # do not allow base rotation
+        return (0.0, 0.0, 0), (0.0, 0.0, 0)
+
     def variation_count(self) -> int:
         return len(colors)
 
@@ -68,8 +71,8 @@ class CustomPickAndLift(Task):
             self.front_camera_new_position()
 
     def get_low_dim_state(self) -> np.ndarray:
-        # get pose from target block
-        block_position = self.target_block.get_pose()
+        # get x, y, z from target block position
+        block_position = self.target_block.get_position()
         # get x, y, z from target position
         target_position = self.target.get_position()
         return np.concatenate((block_position, target_position))
@@ -80,6 +83,10 @@ class CustomPickAndLift(Task):
             2. distance between the target_block and the target (lift_target)
 
             the total reward is the sum of both parts"""
+
+        # success conditions
+        object_grasped = self._success_conditions[0].condition_met()[0]
+
         max_precision = 0.01  # 1cm
         max_reward = 1 / max_precision
         scale = 0.1
@@ -92,10 +99,14 @@ class CustomPickAndLift(Task):
         reward1 = scale * reward1
 
         # second part
-        target_position = self.target.get_position()
-        dist = np.sqrt(np.sum(np.square(np.subtract(target_position, target_block_position)), axis=0))  # euclidean norm
-        reward2 = min((1 / (dist + 0.00001)), max_reward)
-        reward2 = scale * reward2
+        if object_grasped:
+            print("Object Grasped!")
+            target_position = self.target.get_position()
+            dist = np.sqrt(np.sum(np.square(np.subtract(target_position, target_block_position)), axis=0))  # euclidean norm
+            reward2 = min((1 / (dist + 0.00001)), max_reward)
+            reward2 = scale * reward2 + 5.0
+        else:
+            reward2 = 0
 
         return reward1 + reward2
 
