@@ -96,6 +96,12 @@ class TaskEnvironment(object):
     def get_joint_upper_velocity_limits(self):
         return self._robot.arm.get_joint_upper_velocity_limits()
 
+    def get_all_graspable_objects(self):
+        return self._task.get_graspable_objects()
+
+    def get_robot_visuals(self):
+        return self._robot.arm.get_visuals()
+
     def get_all_graspable_object_positions(self, relative_to_cameras=False):
         """ returns the positions of all graspable object relative to all enabled cameras """
         objects = self._task.get_graspable_objects()
