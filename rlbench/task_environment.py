@@ -338,6 +338,37 @@ class TaskEnvironment(object):
         reward = float(success) if task_reward is None else task_reward
         return self._scene.get_observation(), reward, terminate
 
+    def resolve_redundancy_joint_velocities(self, actions, reference_position, alpha=1.0):
+        """
+        Resolves redundant self-motion into the nullspace without changing the gripper tip position
+        :param actions:
+         Current actions without redundancy resolution.
+        :param reference_position:
+         Reference Position (array of joint positions), which is tried to be reached while reducing self-motion.
+        :param max_actions:
+         Maximum actions allowed for scaling.
+        :param alpha:
+         Scales the speed for redundancy resolution.
+        :return: Array of joint velocities, which move the robot's tip according to the provided actions yet push
+         the joint position towards a reference position.
+        """
+        # get the Jacobian
+        J = self._robot.arm.get_jacobian()
+        J = np.transpose(J)
+        J = np.flip(J)
+        J = J[-3:]
+
+        # compute the pseudo inverse
+        J_plus = np.linalg.pinv(J)
+
+        # compute the error
+        e = (self._robot.arm.get_joint_positions() - reference_position)
+
+        # compute the joint velocities
+        q_dot_redundancy = alpha * np.matmul((np.identity(len(self._robot.arm.joints)) - np.matmul(J_plus, J)), e)
+
+        return actions - q_dot_redundancy
+
     def enable_path_observations(self, value: bool) -> None:
         if (self._action_mode.arm != ArmActionMode.DELTA_EE_POSE_PLAN_WORLD_FRAME and
                 self._action_mode.arm != ArmActionMode.ABS_EE_POSE_PLAN_WORLD_FRAME and
