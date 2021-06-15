@@ -5,7 +5,7 @@ import numpy as np
 from pyquaternion import Quaternion
 from pyrep import PyRep
 from pyrep.errors import IKError
-from pyrep.objects import Dummy
+from pyrep.objects import Dummy, Object
 
 from rlbench import utils
 from rlbench.action_modes import ArmActionMode, ActionMode
@@ -56,6 +56,9 @@ class TaskEnvironment(object):
         self._pyrep.start()
         self._target_workspace_check = Dummy.create()
 
+        self._last_e = None
+
+
     def get_name(self) -> str:
         return self._task.get_name()
 
@@ -87,6 +90,10 @@ class TaskEnvironment(object):
                 % self._task.get_name()) from e
 
         self._reset_called = True
+
+        # redundancy resolution
+        self._last_e = None
+
         # Returns a list of descriptions and the first observation
         return desc, self._scene.get_observation()
 
@@ -203,7 +210,7 @@ class TaskEnvironment(object):
         except IKError as e:
             raise InvalidActionError('Could not find a path.') from e
 
-    def step(self, action) -> (Observation, int, bool):
+    def step(self, action, camcorder=None) -> (Observation, int, bool):
         # returns observation, reward, done, info
         if not self._reset_called:
             raise RuntimeError(
@@ -217,13 +224,15 @@ class TaskEnvironment(object):
             raise ValueError('Gripper action expected to be within 0 and 1.')
 
         # Discretize the gripper action
-        current_ee = (1.0 if self._robot.gripper.get_open_amount()[0] > 0.9
-                      else 0.0)
+        current_ee = (1.0 if self._robot.gripper.get_open_amount()[0] > 0.9 else 0.0)
 
         if ee_action > 0.5:
             ee_action = 1.0
         elif ee_action < 0.5:
             ee_action = 0.0
+
+        if current_ee != ee_action:
+            arm_action = np.array([0.0]*7)
 
         if self._action_mode.arm == ArmActionMode.ABS_JOINT_VELOCITY:
 
@@ -231,6 +240,11 @@ class TaskEnvironment(object):
                                       (len(self._robot.arm.joints),))
             self._robot.arm.set_joint_target_velocities(arm_action)
             self._scene.step()
+
+            # if needed save some images
+            if camcorder:
+                obs = self._scene.get_observation()
+                camcorder.save(obs, self.get_robot_visuals(), self.get_all_graspable_objects())
 
         elif self._action_mode.arm == ArmActionMode.DELTA_JOINT_VELOCITY:
 
@@ -325,6 +339,12 @@ class TaskEnvironment(object):
                 done = self._robot.gripper.actuate(ee_action, velocity=0.2)
                 self._pyrep.step()
                 self._task.step()
+
+                # if needed save some images
+                if camcorder:
+                    obs = self._scene.get_observation()
+                    camcorder.save(obs, self.get_robot_visuals(), self.get_all_graspable_objects())
+
             if ee_action == 0.0 and self._attach_grasped_objects:
                 # If gripper close action, the check for grasp.
                 for g_obj in self._task.get_graspable_objects():
@@ -333,22 +353,19 @@ class TaskEnvironment(object):
                 # If gripper open action, the check for ungrasp.
                 self._robot.gripper.release()
 
+
         success, terminate = self._task.success()
         task_reward = self._task.reward()
         reward = float(success) if task_reward is None else task_reward
         return self._scene.get_observation(), reward, terminate
 
-    def resolve_redundancy_joint_velocities(self, actions, reference_position, alpha=1.0):
+    def resolve_redundancy_joint_velocities(self, actions, setup):
         """
         Resolves redundant self-motion into the nullspace without changing the gripper tip position
         :param actions:
          Current actions without redundancy resolution.
-        :param reference_position:
-         Reference Position (array of joint positions), which is tried to be reached while reducing self-motion.
-        :param max_actions:
-         Maximum actions allowed for scaling.
-        :param alpha:
-         Scales the speed for redundancy resolution.
+        :param setup:
+         Setup for redundancy resolution defining the mode, weighting etc.
         :return: Array of joint velocities, which move the robot's tip according to the provided actions yet push
          the joint position towards a reference position.
         """
@@ -361,13 +378,130 @@ class TaskEnvironment(object):
         # compute the pseudo inverse
         J_plus = np.linalg.pinv(J)
 
+        # weighting
+        if type(setup["W"]) is list:
+            W = np.array(setup["W"])
+        elif setup["W"] is None:
+            # use default weighting later
+            W = None
+        else:
+            raise TypeError("Unsupported type %s for weighting vector." % type(setup["W"]))
+
         # compute the error
-        e = (self._robot.arm.get_joint_positions() - reference_position)
+        if setup["mode"] == "reference_position":
+            e = self.get_error_reference_position(setup["ref_position"], W)
+        elif setup["mode"] == "collision_avoidance":
+            e = self.get_error_collision_avoidance(W)
 
         # compute the joint velocities
-        q_dot_redundancy = alpha * np.matmul((np.identity(len(self._robot.arm.joints)) - np.matmul(J_plus, J)), e)
+        q_dot_redundancy = setup["alpha"] * np.matmul((np.identity(len(self._robot.arm.joints)) - np.matmul(J_plus, J)), e)
+
+        # the provided jacobian seems to be inaccurate resulting in slight movement of the ee. This is why
+        # the velocites are set to 0 once the error step changing much.
+        if setup["cut-off_error"] is not None:
+            if self._last_e is not None:
+                e_dot = np.sum(np.abs(e - self._last_e))
+            if self._last_e is not None and e_dot < setup["cut-off_error"]:
+                q_dot_redundancy = np.array([0.0] * 7)
+                self._last_e = e
+            else:
+                self._last_e = e
 
         return actions - q_dot_redundancy
+
+    def get_error_reference_position(self, ref_pos,  W):
+        """
+        Calculates the error for redundancy resoltuion with respect to a reference position.
+        :param ref_pos:
+         Reference position.
+        :param W:
+         Weighting vector.
+        :return:
+         Weighted error vector.
+        """
+        if W is None:
+            # default weighting
+            W = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        return (self._robot.arm.get_joint_positions() - ref_pos) * W
+
+    def get_error_collision_avoidance(self, W):
+        """
+        Calculates the error for redundancy resoltuion with collision avoidance. This only works with tasks with obstacles!
+        :param W:
+         Weighting vector.
+        :return:
+         Weighted error vector.
+        """
+
+        # get the position of the object
+        p_obs = self._task.obstacle.get_position()  + np.array([0, 0, 0.33]) -  self._robot.arm.joints[0].get_position()
+        p_obs = np.append(p_obs, [1])
+
+        # get the transformation matrices, their derivatives, and the positions of the links
+        A_1, A_2, A_3, A_4, A_5, A_6, A_7 = self._robot.get_transformation_matrices()
+        dA_1, dA_2, dA_3, dA_4, dA_5, dA_6, dA_7 = self._robot.get_transformation_matrices_derivatives()
+        p_1, p_2, p_3, p_4, p_5, p_6, p_7 = self._robot.get_link_positions_in_ref_frames()
+
+
+        # we use reciprocal of the distance between each link and an obstacle as our Loss
+        # the chain rule delivers: d/dq L = (p_i^0 (q_1,..., q_i) - p_obs)^T * d/dq (p_i^0 (q_1,..., q_i) - p_obs)
+        # where p_i^0 = (\prod_{j=1}^i A_j^{j-1}(q_j)) * p_i
+        # as the left side of d/dq L is used often, let's calculate it in advance
+        d_1_T = np.transpose(A_1.dot(p_1) - p_obs)
+        d_2_T = np.transpose(A_1.dot(A_2).dot(p_2) - p_obs)
+        d_3_T = np.transpose(A_1.dot(A_2).dot(A_3).dot(p_3) - p_obs)
+        d_4_T = np.transpose(A_1.dot(A_2).dot(A_3).dot(A_4).dot(p_4) - p_obs)
+        d_5_T = np.transpose(A_1.dot(A_2).dot(A_3).dot(A_4).dot(A_5).dot(p_5) - p_obs)
+        d_6_T = np.transpose(A_1.dot(A_2).dot(A_3).dot(A_4).dot(A_5).dot(A_6).dot(p_6) - p_obs)
+        d_7_T = np.transpose(A_1.dot(A_2).dot(A_3).dot(A_4).dot(A_5).dot(A_6).dot(A_7).dot(p_7) - p_obs)
+
+
+
+        # now we can calculate the error in each dimension
+        e_1 = -np.matmul(d_1_T, dA_1.dot(p_1))  + \
+              -np.matmul(d_2_T, dA_1.dot(A_2).dot(p_2)) + \
+              -np.matmul(d_3_T, dA_1.dot(A_2).dot(A_3).dot(p_3)) + \
+              -np.matmul(d_4_T, dA_1.dot(A_2).dot(A_3).dot(A_4).dot(p_4)) + \
+              -np.matmul(d_5_T, dA_1.dot(A_2).dot(A_3).dot(A_4).dot(A_5).dot(p_5)) + \
+              -np.matmul(d_6_T, dA_1.dot(A_2).dot(A_3).dot(A_4).dot(A_5).dot(A_6).dot(p_6)) + \
+              -np.matmul(d_7_T, dA_1.dot(A_2).dot(A_3).dot(A_4).dot(A_5).dot(A_6).dot(A_7).dot(p_7))
+        e_2 = -np.matmul(d_2_T, A_1.dot(dA_2).dot(p_2)) + \
+              -np.matmul(d_3_T, A_1.dot(dA_2).dot(A_3).dot(p_3)) + \
+              -np.matmul(d_4_T, A_1.dot(dA_2).dot(A_3).dot(A_4).dot(p_4)) + \
+              -np.matmul(d_5_T, A_1.dot(dA_2).dot(A_3).dot(A_4).dot(A_5).dot(p_5)) + \
+              -np.matmul(d_6_T, A_1.dot(dA_2).dot(A_3).dot(A_4).dot(A_5).dot(A_6).dot(p_6)) + \
+              -np.matmul(d_7_T, A_1.dot(dA_2).dot(A_3).dot(A_4).dot(A_5).dot(A_6).dot(A_7).dot(p_7))
+        e_3 = -np.matmul(d_3_T, A_1.dot(A_2).dot(dA_3).dot(p_3)) + \
+              -np.matmul(d_4_T, A_1.dot(A_2).dot(dA_3).dot(A_4).dot(p_4)) + \
+              -np.matmul(d_5_T, A_1.dot(A_2).dot(dA_3).dot(A_4).dot(A_5).dot(p_5)) + \
+              -np.matmul(d_6_T, A_1.dot(A_2).dot(dA_3).dot(A_4).dot(A_5).dot(A_6).dot(p_6)) + \
+              -np.matmul(d_7_T, A_1.dot(A_2).dot(dA_3).dot(A_4).dot(A_5).dot(A_6).dot(A_7).dot(p_7))
+        e_4 = -np.matmul(d_4_T, A_1.dot(A_2).dot(A_3).dot(dA_4).dot(p_4)) + \
+              -np.matmul(d_5_T, A_1.dot(A_2).dot(A_3).dot(dA_4).dot(A_5).dot(p_5)) + \
+              -np.matmul(d_6_T, A_1.dot(A_2).dot(A_3).dot(dA_4).dot(A_5).dot(A_6).dot(p_6)) + \
+              -np.matmul(d_7_T, A_1.dot(A_2).dot(A_3).dot(dA_4).dot(A_5).dot(A_6).dot(A_7).dot(p_7))
+        e_5 = -np.matmul(d_5_T, A_1.dot(A_2).dot(A_3).dot(A_4).dot(dA_5).dot(p_5)) + \
+              -np.matmul(d_6_T, A_1.dot(A_2).dot(A_3).dot(A_4).dot(dA_5).dot(A_6).dot(p_6)) + \
+              -np.matmul(d_7_T, A_1.dot(A_2).dot(A_3).dot(A_4).dot(dA_5).dot(A_6).dot(A_7).dot(p_7))
+        e_6 = -np.matmul(d_6_T, A_1.dot(A_2).dot(A_3).dot(A_4).dot(A_5).dot(dA_6).dot(p_6)) + \
+              -np.matmul(d_7_T, A_1.dot(A_2).dot(A_3).dot(A_4).dot(A_5).dot(dA_6).dot(A_7).dot(p_7))
+        e_7 = -np.matmul(d_7_T, A_1.dot(A_2).dot(A_3).dot(A_4).dot(A_5).dot(A_6).dot(dA_7).dot(p_7))
+
+        if W is None:
+            # default weighting vector -> based on the reciprocal of the distance. The greater the distance the smaller
+            # the weight. That is, it is concentrated on close objects.
+            W = np.array([1 / np.sum(np.square(d_1_T)),
+                          1 / np.sum(np.square(d_2_T)) ,
+                          1 / np.sum(np.square(d_3_T)) ,
+                          1 / np.sum(np.square(d_4_T)) ,
+                          1 / np.sum(np.square(d_5_T)) ,
+                          1 / np.sum(np.square(d_6_T)) ,
+                          1 / np.sum(np.square(d_7_T)) ]) * 0.1
+
+        # concatenate errors to error vector and apply weightig
+        e = np.array([e_1, e_2, e_3, e_4, e_5, e_6, e_6])*W
+
+        return e
 
     def enable_path_observations(self, value: bool) -> None:
         if (self._action_mode.arm != ArmActionMode.DELTA_EE_POSE_PLAN_WORLD_FRAME and

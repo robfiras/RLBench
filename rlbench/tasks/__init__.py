@@ -37,6 +37,7 @@ from rlbench.tasks.open_window import OpenWindow
 from rlbench.tasks.open_wine_bottle import OpenWineBottle
 from rlbench.tasks.phone_on_base import PhoneOnBase
 from rlbench.tasks.pick_and_lift import PickAndLift
+from rlbench.tasks.custom_pick_and_lift_no_rotation import CustomPickAndLiftNoRotation
 from rlbench.tasks.pick_up_cup import PickUpCup
 from rlbench.tasks.place_cups import PlaceCups
 from rlbench.tasks.place_hanger_on_rack import PlaceHangerOnRack
@@ -63,6 +64,7 @@ from rlbench.tasks.put_tray_in_oven import PutTrayInOven
 from rlbench.tasks.put_umbrella_in_umbrella_stand import PutUmbrellaInUmbrellaStand
 from rlbench.tasks.reach_and_drag import ReachAndDrag
 from rlbench.tasks.reach_target import ReachTarget
+from rlbench.tasks.reach_target_with_obstacles import ReachTargetWithObstacles
 from rlbench.tasks.remove_cups import RemoveCups
 from rlbench.tasks.scoop_with_spatula import ScoopWithSpatula
 from rlbench.tasks.screw_nail import ScrewNail

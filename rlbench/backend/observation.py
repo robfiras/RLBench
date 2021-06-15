@@ -80,8 +80,10 @@ class Observation(object):
         low_dim_data = [] if self.gripper_open is None else [[self.gripper_open]]
         for data in [self.joint_velocities, self.joint_positions,
                      self.joint_forces,
-                     self.gripper_pose, self.gripper_joint_positions,
-                     self.gripper_touch_forces, self.task_low_dim_state]:
+                     self.gripper_pose,
+                     self.gripper_joint_positions,
+                     self.gripper_touch_forces,
+                     self.task_low_dim_state]:
             if data is not None:
                 low_dim_data.append(data)
         return np.concatenate(low_dim_data) if len(low_dim_data) > 0 else np.array([])
